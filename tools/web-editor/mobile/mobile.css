@@ -1,0 +1,557 @@
+/*
+ * 移动端皮肤层（只在安卓壳里生效）。
+ *
+ * 全部规则挂在 html.loow-mobile 下：桌面浏览器和桌面 exe 永远不会加上这个类，
+ * 所以这里可以放开手重排，不必担心把桌面端改坏。
+ *
+ * 布局模型（竖屏）：
+ *   header（横向可滚动的动作条）
+ *   main  （只剩画布，占满剩余高度）
+ *   #m-sheet（当前页签的抽屉，46vh，可展开到 78vh）
+ *   #m-tabs （五页签，避开手势条）
+ */
+
+html.loow-mobile,
+html.loow-mobile body {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+html.loow-mobile body {
+  font-size: 13px;
+  -webkit-tap-highlight-color: transparent;
+  /* 竖屏里绝不能横向滚动：画布和面板都按视口宽度排 */
+  width: 100vw;
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+html.loow-mobile main {
+  width: 100%;
+  max-width: 100vw;
+  overflow: hidden;
+}
+
+/* ---------------------------------------------------------------- 顶栏 */
+
+html.loow-mobile header {
+  flex: 0 0 auto;
+  gap: 8px;
+  padding: 8px 10px;
+  padding-top: calc(8px + env(safe-area-inset-top, 0px));
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+html.loow-mobile header::-webkit-scrollbar { display: none; }
+
+/* 标题在手机上纯占宽度：用户已经知道自己在哪个 App 里 */
+html.loow-mobile header .title { display: none; }
+
+html.loow-mobile header button {
+  flex: 0 0 auto;
+  min-height: 38px;
+  min-width: 38px;
+  padding: 0 12px;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+html.loow-mobile header .badge { flex: 0 0 auto; white-space: nowrap; }
+
+/* 这三样在 App 里没有意义：地址是给电脑连的，三文件导出要弹三次保存器 */
+html.loow-mobile #phone-addr,
+html.loow-mobile #phone-state,
+html.loow-mobile #btn-export-files { display: none !important; }
+
+/* ---------------------------------------------------------------- 画布 */
+
+html.loow-mobile main {
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+html.loow-mobile main > .center { flex: 1 1 auto; min-height: 0; }
+
+html.loow-mobile .canvas-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* 顶栏的撤销/重做：常驻、可禁用 */
+html.loow-mobile .m-hist {
+  min-width: 42px;
+  font-size: 17px;
+  line-height: 1;
+  color: #cfe0f0;
+}
+html.loow-mobile .m-hist:disabled { opacity: .32; }
+
+/* 项目库：全屏列表（手机上比弹窗好点，列表可能很长） */
+.m-proj-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  flex-direction: column;
+  background: #0b0f14;
+}
+.m-proj-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: calc(10px + env(safe-area-inset-top, 0px)) 14px 10px;
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+.m-proj-head b { font-size: 15px; color: #e6eef7; }
+.m-proj-head span { font-size: 11px; color: var(--muted); }
+.m-proj-head button { margin-left: auto; }
+
+.m-proj-list { flex: 1 1 auto; overflow: auto; padding: 10px 12px calc(20px + env(safe-area-inset-bottom, 0px)); }
+.m-proj-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  margin-bottom: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.m-proj-row b {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  color: #dbe6f2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.m-proj-row span { flex: 0 0 auto; font-size: 11px; color: var(--muted); }
+.m-proj-row button { flex: 0 0 auto; width: 34px; height: 34px; }
+.m-proj-empty { padding: 18px 4px; font-size: 12px; line-height: 1.8; color: var(--muted); }
+
+/* 画布要吃掉全部触摸手势：否则浏览器会把拖动理解成滚动/缩放，图元根本拖不动 */
+html.loow-mobile #stage { touch-action: none; }
+/* 时间轴：竖向还能滚（轨道多的时候），横向交给关键帧拖动 */
+html.loow-mobile .tl-body { touch-action: pan-y; }
+
+/* 预览面板不再浮动：手机上没有第二块地方放它，拖来拖去只会更乱 */
+html.loow-mobile .preview-handle,
+html.loow-mobile .preview-notch { display: none !important; }
+
+/* ---------------------------------------------------------------- 横屏
+ *
+ * 竖屏是"画布 + 底部抽屉"，横屏高度只有 ~390dp，底部抽屉会把画布压成一条缝
+ * （实测画布只剩 104dp 高，宽度 48dp，完全没法编辑）。横屏改成"左画布 + 右抽屉"。
+ */
+@media (orientation: landscape) and (max-height: 560px) {
+  html.loow-mobile body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 320px;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+  html.loow-mobile header {
+    grid-column: 1 / span 2;
+    grid-row: 1;
+  }
+  html.loow-mobile main {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  #m-sheet {
+    grid-column: 2;
+    grid-row: 2 / span 2;
+    width: auto;
+    height: auto;
+    min-height: 0;
+    border-top: none;
+    border-left: 1px solid var(--line);
+  }
+  #m-sheet.expanded { height: auto; }
+  #m-sheet[data-tab="anim"] { height: auto; }
+  #m-tabs {
+    grid-column: 1;
+    grid-row: 3;
+    width: auto;
+    height: calc(46px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* ---------------------------------------------------------------- 抽屉 */
+
+#m-sheet {
+  display: none;
+  flex: 0 0 auto;
+  flex-direction: column;
+  width: 100%;
+  max-width: 100vw;
+  height: 46vh;
+  min-height: 190px;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  overflow: hidden;
+  position: relative;
+  padding-bottom: 2px;
+}
+
+#m-sheet.open { display: flex; }
+#m-sheet.expanded { height: 78vh; }
+
+/* 时间轴要的是高度：46vh 里塞下"播放/组/触发/循环/时长/插帧"顶栏后只剩一条缝 */
+#m-sheet[data-tab="anim"] { height: 58vh; }
+#m-sheet[data-tab="anim"].expanded { height: 84vh; }
+
+/* 顶部那根小横条：提示"这块可以收起来"，点一下收起 */
+#m-sheet::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 5px;
+  width: 36px;
+  height: 4px;
+  margin-left: -18px;
+  border-radius: 2px;
+  background: #2c3746;
+  z-index: 2;
+}
+
+.m-pane {
+  display: none;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  width: 100%;
+  max-width: 100vw;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-top: 12px;
+}
+
+/* 桌面端有一堆 nowrap 的提示语，在 360dp 宽里会把整页顶宽（实测：页签被挤到屏幕外） */
+.m-pane .badge,
+.m-pane .hint,
+.m-pane .row .meta {
+  white-space: normal;
+  word-break: break-word;
+}
+
+.m-pane.on { display: flex; }
+
+/* 动画页签要撑满：里面是时间轴 + 关键帧面板，不能整页滚动 */
+.m-pane[data-tab="anim"] { overflow: hidden; }
+
+/* 原来左右两栏的宽度/边框在抽屉里全部失效 */
+.m-pane aside.left,
+.m-pane aside.right {
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  border: none !important;
+  background: transparent !important;
+  flex: 1 1 auto;
+}
+
+.m-pane .section {
+  flex: 0 0 auto !important;
+  max-height: none !important;
+  min-height: 0 !important;
+  border-bottom: 1px solid var(--line);
+}
+
+.m-pane .section > .hd {
+  position: sticky;
+  top: -12px;
+  z-index: 1;
+  min-height: 34px;
+  font-size: 12px;
+}
+
+/* 时间轴：手机上竖向排（轨道在上、关键帧面板在下），横着并排谁都看不清 */
+.m-pane .timeline {
+  flex: 1 1 auto;
+  height: auto;
+  border-top: none;
+}
+
+.m-pane .tl-main {
+  flex-direction: column;
+  min-height: 0;
+}
+
+.m-pane .tl-body {
+  flex: 1 1 auto;
+  min-height: 90px;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.m-pane .tl-kf {
+  flex: 0 0 auto;
+  min-width: 0;
+  height: 46%;
+  max-height: 190px;
+  border-left: none;
+  border-top: 1px solid var(--line);
+}
+
+/* 时间轴顶栏控件多（播放/组/触发/循环/时长/插帧…），手机上换行比横向滚动好用：
+   横向滚动会把"删帧"这种关键按钮藏到屏幕外，用户根本不知道有。 */
+.m-pane .timeline .hd {
+  flex-wrap: wrap;
+  row-gap: 4px;
+  overflow: visible;
+}
+.m-pane .timeline .hd > * { flex: 0 0 auto; }
+.m-pane .timeline .hd .spacer { flex: 1 1 0; }
+.m-pane .timeline .hd select { max-width: 42vw; }
+/* "动画组"这三个字省下来正好放一个控件：下拉框自己说得清 */
+.m-pane .timeline .hd .tl-lab { display: none; }
+
+/* ---------------------------------------------------------------- 页签栏 */
+
+#m-tabs {
+  display: flex;
+  flex: 0 0 auto;
+  width: 100%;
+  max-width: 100vw;
+  overflow: hidden;
+  height: calc(54px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  background: #0c1015;
+  border-top: 1px solid var(--line);
+}
+
+#m-tabs .m-tab {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border: none;
+  background: none;
+  color: #5f6d7c;
+  font-size: 10px;
+  min-width: 0;
+}
+
+#m-tabs .m-tab .glyph { font-size: 16px; line-height: 1; }
+#m-tabs .m-tab.on { color: var(--accent); }
+#m-tabs .m-tab:active { background: #141b24; }
+
+/* ---------------------------------------------------------------- 触控尺寸 */
+
+html.loow-mobile button,
+html.loow-mobile select {
+  min-height: 34px;
+  font-size: 13px;
+}
+
+html.loow-mobile input[type="number"],
+html.loow-mobile input[type="text"] {
+  min-height: 34px;
+  font-size: 14px;
+}
+
+/* 16px 以下 iOS 会自动放大；安卓虽不放大，但 14px 在手机上才看得清 */
+html.loow-mobile input { font-size: 14px; }
+
+html.loow-mobile .field {
+  grid-template-columns: 88px minmax(0, 1fr);
+  padding: 7px 10px;
+}
+
+html.loow-mobile .row {
+  padding: 10px 10px;
+  min-height: 42px;
+}
+
+html.loow-mobile .icon-btn {
+  width: 34px;
+  min-width: 34px;
+  height: 32px;
+}
+
+/* 关键帧菱形：视觉还是小的，命中区靠透明外扩撑到 ~40px */
+html.loow-mobile .kf {
+  width: 15px;
+  height: 15px;
+  margin: -8px 0 0 -8px;
+}
+html.loow-mobile .kf::after {
+  content: "";
+  position: absolute;
+  inset: -11px;
+}
+
+html.loow-mobile .tl-track { height: 40px; }
+html.loow-mobile .tl-label { width: 78px; font-size: 11px; }
+
+/* 节点工作台：手机上按钮别太小 */
+html.loow-mobile .st-toolbtn,
+html.loow-mobile .st-primary,
+html.loow-mobile .st-ghostbtn {
+  min-height: 36px;
+  font-size: 12px;
+}
+
+/* ---- 节点工作台：三栏 → 画布 + 底部抽屉 ---- */
+
+html.loow-mobile .studio-top {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  gap: 6px;
+  padding: 6px 8px;
+  /* 工作台是 position:fixed inset:0，会盖到状态栏下面（targetSdk 35 强制边到边） */
+  padding-top: calc(6px + env(safe-area-inset-top, 0px));
+  scrollbar-width: none;
+}
+html.loow-mobile .studio-top::-webkit-scrollbar { display: none; }
+html.loow-mobile .studio-top > * { flex: 0 0 auto; }
+/* 品牌块和场景名在手机上纯占宽度 */
+html.loow-mobile .studio-brand,
+html.loow-mobile .studio-scene,
+html.loow-mobile .st-kbd { display: none; }
+
+/* 画布/节点/端口都要吃掉触摸：否则手指拖动会被浏览器当成滚动或长按选中 */
+html.loow-mobile .studio-canvas,
+html.loow-mobile .st-node,
+html.loow-mobile .st-port { touch-action: none; }
+
+/* 端口圆点只有 10px，手指根本点不准；用透明外扩把命中区撑到 ~26px。
+   注意必须是 relative 而不是 absolute：端口是 flex 行里的一个子元素，
+   改成 absolute 会脱出流、被推到卡片边缘外，连线端点也会跟着错位
+   （真机表现：圆点飘在节点外面，线连到空气里）。 */
+html.loow-mobile .st-port {
+  position: relative;
+  width: 12px;
+  height: 12px;
+}
+html.loow-mobile .st-port::after {
+  content: "";
+  position: absolute;
+  inset: -7px;
+  border-radius: 50%;
+}
+
+/* 「滚轮缩放 / Del 删除」这类提示在手机上纯属噪音 */
+html.loow-mobile .st-chips { display: none; }
+
+html.loow-mobile .studio-body { display: flex; flex-direction: column; min-height: 0; }
+html.loow-mobile .studio-main { flex: 1 1 auto; min-height: 0; }
+
+#st-sheet {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  height: 44vh;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  min-height: 170px;
+  background: #090e15;
+  border-top: 1px solid #131c26;
+  overflow: hidden;
+}
+#st-sheet.collapsed { height: auto; min-height: 0; }
+
+#st-sheet .st-sheet-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid #131c26;
+  flex: 0 0 auto;
+}
+#st-sheet .st-sheet-tab {
+  flex: 1 1 0;
+  height: 32px;
+  border-radius: 7px;
+  border: 1px solid #1c2a38;
+  background: #0d151e;
+  color: #7d93a8;
+  font-size: 11px;
+}
+#st-sheet .st-sheet-tab.on { background: #16233a; border-color: #35507a; color: #9fc4ef; }
+
+#st-sheet .st-sheet-pane {
+  display: none;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  overflow: auto;
+}
+#st-sheet .st-sheet-pane.on { display: flex; }
+
+#st-sheet .studio-library {
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  border-right: 0;
+}
+#st-sheet .st-panel { margin: 0; }
+
+/* 桌面端把参数面板限死在 46% 高度（右栏很高，够用）。放进 44vh 的抽屉里就只剩
+   170px，一个节点都放不下，还得靠滚动条。手机上让面板按内容长高，抽屉再兜底。 */
+#st-sheet .st-param-panel {
+  flex: 0 0 auto;
+  max-height: none;
+}
+#st-sheet .studio-params { overflow: visible; }
+#st-sheet .studio-log { flex: 1 1 auto; min-height: 0; overflow: auto; }
+
+/* 参数 / 模拟这类"内容多高就多高"的页签，抽屉跟着内容走，省出来的高度还给画布。
+   节点库和日志是长列表，保持固定高度 + 内部滚动。 */
+#st-sheet[data-tab="params"],
+#st-sheet[data-tab="sim"] {
+  height: auto;
+  max-height: 66vh;
+}
+
+/* 图层行的拖动把手：只有它 touch-action:none，列表本身仍然可以正常滚动 */
+html.loow-mobile .m-drag-handle {
+  flex: 0 0 auto;
+  width: 26px;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: -6px;
+  color: #4c5b6b;
+  font-size: 15px;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* 工作台里的悬浮预览：手机上缩成角落缩略图，标题条只留作拖动把手 */
+html.loow-mobile .canvas-wrap.studio-float .st-float-bar {
+  height: 18px;
+  /* 这根条就是"搬动缩略图"的把手，必须自己吃掉触摸 */
+  touch-action: none;
+}
+html.loow-mobile .canvas-wrap.studio-float .st-float-title { display: none; }
+
+/* 拖动中的图层行：给出明确的"我抓到了"反馈 */
+html.loow-mobile #layer-list .row.dragging {
+  background: #1b2b23;
+  outline: 1px solid #3ddc97;
+  opacity: .85;
+}
+
+/* 「素材」页已删除：它只是「图层 → ＋」菜单的四个按钮，重复且占一个页签。
+   真要做素材管理（项目图片资源、复用、清理未引用），应该是另一套东西，不是菜单。 */
+
+/* 「＋ 添加」菜单改成浮层：桌面端它是撑开列表的下拉，手机上一撑开就把图层列表
+   顶下去、还多一条滚动条，看起来像页面错乱。 */
+html.loow-mobile .m-pane aside.left { position: relative; }
+html.loow-mobile #add-menu {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: 42px;
+  z-index: 6;
+  margin: 0;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, .55);
+}

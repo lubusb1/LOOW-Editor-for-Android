@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        全屏深色：编辑器的界面底色是 #070A0D，窗口背景用同一个色，
+        否则 WebView 起来之前会闪一下白屏，在深色壁纸里特别刺眼。
+    -->
+    <style name="Theme.LoowEditor" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#FF070A0D</item>
+        <item name="android:statusBarColor">#FF0B0E12</item>
+        <item name="android:navigationBarColor">#FF0B0E12</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>

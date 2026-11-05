@@ -1,0 +1,13 @@
+# 统一换行：仓库里存 LF，Windows 上的 .cmd 检出成 CRLF。
+# 不加这个，别人 clone 下来的批处理可能是 LF，cmd.exe 解析会出问题。
+* text=auto
+
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.jks binary
+*.keystore binary

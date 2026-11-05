@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+        不需要 INTERNET：编辑器界面、图标库、SVG 全部来自 assets，
+        由 shouldInterceptRequest 直接喂给 WebView，一次网络请求都不会发。
+    -->
+
+    <application
+        android:allowBackup="true"
+        android:icon="@drawable/ic_editor"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.LoowEditor">
+
+        <!--
+            configChanges 全部自己吃掉：旋转屏幕时如果重建 Activity，WebView 会重新加载，
+            正在编辑的未保存内容就没了（自动存草稿有 400ms 防抖，正好卡在这个缝里）。
+            布局靠 CSS 断点重排，不需要重建。
+        -->
+        <activity
+            android:name=".EditorActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode|density"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- 从壁纸 App / 文件管理器「用 LOOW 编辑器打开」一个预设 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/x-loow-preset" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/x-loow-preset" />
+            </intent-filter>
+        </activity>
+
+        <!--
+            分享预设给壁纸 App 用的文件出口。
+            为什么不用 androidx 的 FileProvider：项目零第三方依赖（连 AndroidX 都不引），
+            这里只需要"把一个 cache 文件以 content:// 暴露给被授权的接收方"，
+            自己写 40 行比拉一个库划算，行为也完全可控。
+        -->
+        <provider
+            android:name=".ShareProvider"
+            android:authorities="com.loomwall.editor.share"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+    </application>
+
+</manifest>
