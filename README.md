@@ -51,6 +51,27 @@ HTML/CSS/JS（无框架、无构建），构建期同步进 assets。桌面浏�
 发布签名用仓库外的 keystore：根目录放 **keystore.properties**（已在 .gitignore 里）就自动生效，
 没有则退回 debug 签名，保证 clone 下来照样能构建。
 
+## 换设备
+
+仓库里没有三样东西，换机器时要单独处理：
+
+| 东西 | 怎么办 |
+|---|---|
+| `.toolchain/`（JDK + SDK + Gradle，约 2.4 GB） | 跑 `tools\bootstrap.cmd` 重建，需要 Node.js，约 5 分钟 |
+| 签名私钥 `keystore.properties` + `.jks` | **手动拷贝**。丢了就再也无法给已发布的 App 做覆盖升级，用户只能卸载重装 |
+| `build/`、`dist/` | 自动生成，不用管 |
+
+步骤：
+
+1. `git clone` 本仓库
+2. 装 Node.js（bootstrap 用它下载，Windows 自带的 tar 负责解压）
+3. `tools\bootstrap.cmd`
+4. 把 `keystore.properties` 放到仓库根目录，`.jks` 放到它 `storeFile` 指向的位置
+5. `build.cmd :editor:assembleRelease`，产物签名应该是 `CN=LOOW`
+
+第 4 步的路径是相对仓库根的，换目录后对不上就改 `keystore.properties` 里那一行。
+没放私钥也能构建，但打出来的是 debug 签名包，装上去覆盖不了已发布的正式版。
+
 ## 目录结构
 
 | 目录 | 内容 |
