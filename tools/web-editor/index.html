@@ -230,6 +230,23 @@
   }
   input[type=color]::-webkit-color-swatch-wrapper { padding: 2px; }
   input[type=color]::-webkit-color-swatch { border: none; border-radius: 4px; }
+  /* 色值输入：和取色器同一行。等宽字体让 #RRGGBB 对得齐，也方便看清数字 */
+  .hex-color {
+    flex: 0 0 auto;
+    width: 88px;
+    height: 24px;
+    box-sizing: border-box;
+    padding: 0 6px;
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 11px;
+    letter-spacing: .3px;
+    text-transform: uppercase;
+    color: #cfe0f0;
+    background: #0a1119;
+    border: 1px solid #1a2836;
+    border-radius: 6px;
+  }
+  .hex-color:focus { outline: none; border-color: #2f4a63; }
 /* ================= 触发器工作台（覆盖层） ================= */
 /* 参考 LayerFlow NODE STUDIO 的质感：近黑底 + 深蓝卡片 + 极细边框 + 类型色发光 */
 .studio { position: fixed; inset: 0; z-index: 80; display: flex; flex-direction: column;

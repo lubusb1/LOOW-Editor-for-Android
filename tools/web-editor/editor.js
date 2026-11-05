@@ -4177,13 +4177,18 @@ function renderInspector() {
   } else if (isContainer(rect)) {
     // 容器用 background（不是 color）：这两个字段以前没分支，
     // 导致容器的颜色框空着、改了也不生效。
+    const hexBackground = hexColorField(
+      () => rect.background,
+      value => { rect.background = value; renderLayers(); draw(); }
+    );
     color.value = colorToInput(rect.background || '#00000000');
     color.oninput = () => {
       rect.background = mergeRgbInto(color.value, rect.background);
+      hexBackground.value = colorToInput(rect.background).toUpperCase();
       renderLayers();
       draw();
     };
-    field('容器背景', [color, alphaField(rect, 'background')], 'sep');
+    field('容器背景', [color, hexBackground, alphaField(rect, 'background')], 'sep');
 
     // 裁剪开关：等价 CSS overflow: hidden
     const clipBox = document.createElement('input');
@@ -4194,9 +4199,18 @@ function renderInspector() {
 
     field('子元素数', [el('span', 'badge', String((rect.children || []).length))]);
   } else {
+    const hexColor = hexColorField(
+      () => rect.color,
+      value => { rect.color = value; renderLayers(); draw(); }
+    );
     color.value = colorToInput(rect.color);
-    color.oninput = () => { rect.color = mergeRgbInto(color.value, rect.color); renderLayers(); draw(); };
-    field('颜色', [color, alphaField(rect, 'color')], 'sep');
+    color.oninput = () => {
+      rect.color = mergeRgbInto(color.value, rect.color);
+      hexColor.value = colorToInput(rect.color).toUpperCase();
+      renderLayers();
+      draw();
+    };
+    field('颜色', [color, hexColor, alphaField(rect, 'color')], 'sep');
   }
 
   // 渐变：类型 + 角度 + 两个色标（形状/路径才有意义）
@@ -4265,8 +4279,14 @@ function renderInspector() {
         const colorInput = document.createElement('input');
         colorInput.type = 'color';
         colorInput.value = colorToInput(stop.color);
+        // 色标也要能手输：渐变的两个色经常是从设计稿里抄的
+        const hexStop = hexColorField(
+          () => fresh().stops[index].color,
+          value => { write((stops) => { stops[index].color = value; }); }
+        );
         colorInput.oninput = () => {
           write((stops) => { stops[index].color = mergeRgbInto(colorInput.value, stops[index].color); });
+          hexStop.value = colorToInput(fresh().stops[index].color).toUpperCase();
         };
 
         const alpha = sliderWithInput({
@@ -4281,7 +4301,7 @@ function renderInspector() {
           onCommit: () => renderAll(true)
         });
 
-        field(label, [colorInput, alpha]);
+        field(label, [colorInput, hexStop, alpha]);
       };
 
       stopRow(0, '起色');
@@ -4291,8 +4311,16 @@ function renderInspector() {
 
   const bg = document.createElement('input');
   bg.type = 'color';
+  const bgHex = hexColorField(
+    () => state.doc.scene.root.background,
+    value => { state.doc.scene.root.background = value; draw(); }
+  );
   bg.value = colorToInput(state.doc.scene.root.background);
-  bg.oninput = () => { state.doc.scene.root.background = mergeRgbInto(bg.value, state.doc.scene.root.background); draw(); };
+  bg.oninput = () => {
+    state.doc.scene.root.background = mergeRgbInto(bg.value, state.doc.scene.root.background);
+    bgHex.value = colorToInput(state.doc.scene.root.background).toUpperCase();
+    draw();
+  };
     const bgAlpha = sliderWithInput({
     min: 0, max: 100, step: 1,
     value: Math.round(colorAlphaOf(state.doc.scene.root.background) * 100),
@@ -4305,7 +4333,7 @@ function renderInspector() {
     },
     onCommit: () => renderAll(true)
   });
-  field('画布背景', [bg, bgAlpha], 'sep');
+  field('画布背景', [bg, bgHex, bgAlpha], 'sep');
 }
 
 /** 只换 RGB，保留原有 alpha（取色器只能给 #RRGGBB）。 */
@@ -4314,6 +4342,55 @@ function mergeRgbInto(hexFromInput, colorValue) {
   const old = parseColor(colorValue || '#FFFFFFFF');
   const a = old.a === undefined ? 1 : old.a;
   return colorToHex({ r: rgb.r, g: rgb.g, b: rgb.b, a });
+}
+
+/**
+ * 十六进制色值输入框。
+ *
+ * 为什么需要：系统取色器只能点，从设计稿里抄一个 #4C1D95 要一格一格挪；
+ * 手机上的取色器更惨，只有八个预设色，根本调不出想要的颜色。
+ *
+ * 接受 #RGB / #RRGGBB / #AARRGGBB，不带 # 也认。只给 RGB 时保留原来的 alpha，
+ * 和取色器的行为保持一致。
+ */
+function hexColorField(getValue, setValue) {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'hex-color';
+  input.spellcheck = false;
+  input.autocomplete = 'off';
+  input.maxLength = 9;
+  input.title = '直接输入色值，如 #4C1D95（支持 #RGB / #RRGGBB / #AARRGGBB）';
+
+  const toText = () => {
+    const c = parseColor(getValue() || '#FFFFFFFF');
+    return '#' + [c.r, c.g, c.b]
+      .map(v => clamp(Math.round(v), 0, 255).toString(16).padStart(2, '0').toUpperCase())
+      .join('');
+  };
+  const sync = () => { input.value = toText(); };
+
+  const commit = () => {
+    const raw = input.value.trim().replace(/^#/, '');
+    let hex = '';
+    if (/^[0-9a-f]{3}$/i.test(raw)) hex = '#' + raw.split('').map(ch => ch + ch).join('');
+    else if (/^[0-9a-f]{6}$/i.test(raw) || /^[0-9a-f]{8}$/i.test(raw)) hex = '#' + raw;
+    if (!hex) {
+      sync();
+      status('色值格式不对：要 #RGB、#RRGGBB 或 #AARRGGBB');
+      return;
+    }
+    setValue(hex.length === 9 ? hex.toUpperCase() : mergeRgbInto(hex, getValue()));
+    sync();
+  };
+
+  input.onchange = commit;
+  input.onkeydown = ev => {
+    if (ev.key === 'Enter') { ev.preventDefault(); input.blur(); }
+    else if (ev.key === 'Escape') { sync(); input.blur(); }
+  };
+  sync();
+  return input;
 }
 
 /** 只换 alpha，保留 RGB。 */
