@@ -11,8 +11,8 @@ LOOW 壁纸引擎的配套编辑器，独立安装的 App（`com.loomwall.editor
 HTML/CSS/JS（无框架、无构建），构建期同步进 assets。桌面浏览器打开同一个目录，
 用的是同一套编辑逻辑，格式不会漂。
 
-> **需要同时安装 LOOW 壁纸 App**（渲染端）。编辑器只负责设计，保存的预设由它渲染上屏；
-> 两个 App 通过 `schema/` 里的 JSON 格式对接，代码不共享。
+> **需要同时安装 LOOW 壁纸 App**（渲染端）：在 [KK-486/Loomwall](https://github.com/KK-486/Loomwall) 的 Releases 里下载。
+> 编辑器只负责设计，保存的预设由它渲染上屏；两个 App 通过 `schema/` 里的 JSON 格式对接，代码不共享。
 
 ## 功能
 
