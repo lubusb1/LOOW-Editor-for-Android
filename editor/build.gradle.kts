@@ -43,8 +43,11 @@ android {
         applicationId = "com.loomwall.editor"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        // 每次更新都要动这两个数（规则见 AGENTS.md「版本号」）：
+        // versionCode 是 Android 判断"能不能覆盖安装"的唯一依据，必须单调递增；
+        // versionName 是给人看的，小更新 +0.1，大更新 +1.0。
+        versionCode = 2
+        versionName = "0.2.0"
     }
 
     signingConfigs {
