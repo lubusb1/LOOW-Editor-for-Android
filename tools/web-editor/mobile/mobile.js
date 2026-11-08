@@ -122,6 +122,102 @@
     if (shorten[text]) button.textContent = shorten[text];
   });
 
+  // ---------------------------------------------------------------- 属性面板排序
+  //
+  // 桌面端把「视差」放最上面：全局参数和本层参数要对照着看。
+  // 但手机上属性面板只有半屏高，先看到五行视差滑条加一段说明，才轮得到位置/尺寸/颜色——
+  // 日常要调的东西全在下面。这里把整段视差挪到末尾。
+  (function moveParallaxLast() {
+    const base = window.renderInspector;
+    if (typeof base !== 'function') return;
+    window.renderInspector = function () {
+      const result = base.apply(this, arguments);
+      const box = document.getElementById('inspector');
+      const block = box && box.querySelector('.parallax-block');
+      if (block) box.appendChild(block);
+      return result;
+    };
+  })();
+
+  // ---------------------------------------------------------------- 关键帧面板
+  //
+  // 没选中关键帧时，这块占着抽屉 46% 的高度只显示一行提示。
+  // 空的时候收成一条，把高度还给时间轴。
+  (function compactKeyframePanel() {
+    const base = window.renderKeyframeInspector;
+    if (typeof base !== 'function') return;
+    window.renderKeyframeInspector = function () {
+      const result = base.apply(this, arguments);
+      const box = document.getElementById('kf-inspector');
+      const panel = box && box.closest ? box.closest('.tl-kf') : null;
+      if (panel) {
+        const empty = !!(box.querySelector('.hint') && !box.querySelector('.field'));
+        panel.classList.toggle('empty', empty);
+      }
+      return result;
+    };
+  })();
+
+  // ---------------------------------------------------------------- 图层提示文案
+  //
+  // 桌面那句是"拖动图层改层级 · 双击图层名重命名 · 拖到容器中间放进容器 · 越靠下越靠上"，
+  // 手机上两行还占高度，而且"拖动"要靠左边的 ≡ 把手，说明里必须点出来。
+  (function shortenLayerHint() {
+    const hint = document.getElementById('layer-hint');
+    if (!hint) return;
+    hint.textContent = '拖 ≡ 改层级 · 双击改名 · 拖进容器里就成子层';
+  })();
+
+  // ---------------------------------------------------------------- 面板抓取条
+  //
+  // 面板顶部那根小横条以前只是装饰（CSS ::before），现在做成真按钮：
+  // 点一下收起/展开，把画布让出来——手机上画布只有一百多像素宽，需要随时能放大。
+  (function sheetGrabber() {
+    const grab = document.createElement('button');
+    grab.type = 'button';
+    grab.id = 'm-sheet-grab';
+    grab.title = '收起 / 展开面板';
+    grab.setAttribute('aria-label', '收起或展开面板');
+    grab.addEventListener('click', () => {
+      open = !open;
+      apply();
+    });
+    sheet.appendChild(grab);
+  })();
+
+  // ---------------------------------------------------------------- 画板折叠复位
+  //
+  // 桌面端双击画板会把它折叠成 3%（只剩一个点）。这个状态会存进 shellState，
+  // 手机上一旦被误触，重开 App 还是黑的，用户会以为"画板打不开"。
+  // 那个手势现在在手机上已经禁用了，这里把历史遗留的折叠状态一并复位。
+  (function forcePanelVisible() {
+    const panel = document.getElementById('preview-panel');
+    if (!panel) return;
+    panel.classList.remove('collapsed');
+    if (typeof saveShellState === 'function') saveShellState({ panelCollapsed: false });
+    requestAnimationFrame(() => {
+      try { if (typeof resizeCanvas === 'function') resizeCanvas(); } catch (e) { /* 忽略 */ }
+      try { if (typeof draw === 'function') draw(); } catch (e) { /* 忽略 */ }
+    });
+  })();
+
+  // ---------------------------------------------------------------- 触发器入口
+  //
+  // 顶栏那排按钮在手机上要横向滑动才看得见「触发器」，很多人根本不知道有这个工作台。
+  // 画布右上角放一个常驻的悬浮按钮，一眼能看到。
+  (function studioEntry() {
+    const source = document.getElementById('btn-studio');
+    if (!source) return;
+    const fab = document.createElement('button');
+    fab.type = 'button';
+    fab.id = 'm-studio-fab';
+    fab.innerHTML = '<span class="glyph">🧩</span>触发器';
+    fab.title = '打开触发器工作台';
+    fab.addEventListener('click', () => source.click());
+    const host = document.querySelector('main') || document.body;
+    host.appendChild(fab);
+  })();
+
   // 保存对话框里的文案：手机上"下载到电脑"其实是存到手机文件里
   document.querySelectorAll('#save-modal label').forEach(label => {
     if (label.textContent.indexOf('下载到电脑') >= 0) {
@@ -389,24 +485,12 @@
     apply();
   })();
 
-  // 选中节点后自动翻到「参数」页：手机上点节点却看不到参数，等于白点。
-  // 只在"选中目标变了"时切，避免用户手动翻到日志后被拽回来。
-  (function autoOpenParams() {
-    const baseParams = window.renderStudioParams;
-    if (typeof baseParams !== 'function') return;
-    let lastSelected = null;
-    window.renderStudioParams = function () {
-      const result = baseParams.apply(this, arguments);
-      const selected = document.querySelector('.st-node.sel');
-      const id = selected ? (selected.dataset.id || selected.textContent.trim().slice(0, 24)) : null;
-      if (id && id !== lastSelected) {
-        const sheet = document.getElementById('st-sheet');
-        if (sheet && typeof sheet.showTab === 'function') sheet.showTab('params');
-      }
-      lastSelected = id;
-      return result;
-    };
-  })();
+  // 点卡片只选中，不自动翻到「参数」页。
+  //
+  // 曾经做过"选中就翻页"：想法是手机上点节点却看不到参数等于白点。但按下卡片
+  // 同时也是**拖动的起点**——手指刚碰到卡片，抽屉就换页、重新布局，整个画布
+  // 跟着跳一下，拖起来非常难受。
+  // 现在参数页由用户自己点：选中看画布，要改参数再点「参数」。
 
   // ---------------------------------------------------------------- 画布手势不再冒泡到预览面板
   //

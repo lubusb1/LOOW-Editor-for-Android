@@ -28,17 +28,49 @@ html.loow-mobile body {
 }
 
 html.loow-mobile main {
+  position: relative;      /* 触发器悬浮按钮的定位参照 */
   width: 100%;
   max-width: 100vw;
   overflow: hidden;
 }
 
+/* 触发器入口：顶栏里那个要横向滑动才看得见，这里给一个常驻的 */
+#m-studio-fab {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 15px;
+  border: 1px solid rgba(124, 92, 255, .55);
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(124, 92, 255, .95), rgba(94, 62, 224, .95));
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: .5px;
+  box-shadow: 0 6px 20px rgba(78, 46, 200, .45);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+#m-studio-fab .glyph { font-size: 14px; line-height: 1; }
+#m-studio-fab:active { transform: scale(.96); }
+
 /* ---------------------------------------------------------------- 顶栏 */
+
+/* 顶栏右侧这一组（触发器 / build / 元素统计）在手机上是冗余的：
+   触发器已经有画布右上角的悬浮按钮，另外两个是开发期信息，占着宽度还挤掉真按钮。 */
+html.loow-mobile #btn-studio,
+html.loow-mobile #build,
+html.loow-mobile #stat { display: none; }
 
 html.loow-mobile header {
   flex: 0 0 auto;
-  gap: 8px;
-  padding: 8px 10px;
+  /* 7 个按钮必须一屏放下：「保存」被挤到屏幕外，等于主操作要横向滑才找得到 */
+  gap: 6px;
+  padding: 8px 8px;
   padding-top: calc(8px + env(safe-area-inset-top, 0px));
   overflow-x: auto;
   overflow-y: hidden;
@@ -52,10 +84,10 @@ html.loow-mobile header .title { display: none; }
 html.loow-mobile header button {
   flex: 0 0 auto;
   min-height: 38px;
-  min-width: 38px;
-  padding: 0 12px;
+  min-width: 34px;
+  padding: 0 9px;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: 12.5px;
 }
 
 html.loow-mobile header .badge { flex: 0 0 auto; white-space: nowrap; }
@@ -205,19 +237,32 @@ html.loow-mobile .preview-notch { display: none !important; }
 #m-sheet[data-tab="anim"] { height: 58vh; }
 #m-sheet[data-tab="anim"].expanded { height: 84vh; }
 
-/* 顶部那根小横条：提示"这块可以收起来"，点一下收起 */
-#m-sheet::before {
+/* 顶部那根小横条：做成真按钮，点一下收起 / 展开，把画布让出来 */
+#m-sheet-grab {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  transform: translateX(-50%);
+  width: 72px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  background: none;
+  z-index: 3;
+  -webkit-tap-highlight-color: transparent;
+}
+#m-sheet-grab::before {
   content: "";
   position: absolute;
   left: 50%;
-  top: 5px;
+  top: 6px;
   width: 36px;
   height: 4px;
   margin-left: -18px;
   border-radius: 2px;
   background: #2c3746;
-  z-index: 2;
 }
+#m-sheet-grab:active::before { background: #3d4c60; }
 
 .m-pane {
   display: none;
@@ -297,19 +342,26 @@ html.loow-mobile .preview-notch { display: none !important; }
   border-left: none;
   border-top: 1px solid var(--line);
 }
+/* 没选中关键帧时这块只剩一行提示，收成一条，高度还给时间轴 */
+.m-pane .tl-kf.empty { height: auto; max-height: none; }
+.m-pane .tl-kf.empty .inspector { padding: 2px 10px 8px; }
+.m-pane .tl-kf.empty .inspector .hint { font-size: 11px; }
 
-/* 时间轴顶栏控件多（播放/组/触发/循环/时长/插帧…），手机上换行比横向滚动好用：
+/* 时间轴顶栏：桌面已经拆成两行（组 / 播放参数），手机上每行再按需换行。
    横向滚动会把"删帧"这种关键按钮藏到屏幕外，用户根本不知道有。 */
-.m-pane .timeline .hd {
+.m-pane .tl-bar {
   flex-wrap: wrap;
   row-gap: 4px;
   overflow: visible;
 }
-.m-pane .timeline .hd > * { flex: 0 0 auto; }
-.m-pane .timeline .hd .spacer { flex: 1 1 0; }
-.m-pane .timeline .hd select { max-width: 42vw; }
+.m-pane .tl-bar > * { flex: 0 0 auto; }
+.m-pane .tl-bar select { max-width: 42vw; }
 /* "动画组"这三个字省下来正好放一个控件：下拉框自己说得清 */
-.m-pane .timeline .hd .tl-lab { display: none; }
+.m-pane .tl-bar .tl-lab { display: none; }
+.m-pane .tl-ruler .tl-label { width: 78px; }
+/* 播放头读数在手机上是冗余的：标尺上有刻度、指针位置也看得见，
+   省下的宽度正好让「＋组 / 改名 / 删组」待在同一行。 */
+.m-pane #tl-info { display: none; }
 
 /* ---------------------------------------------------------------- 页签栏 */
 
