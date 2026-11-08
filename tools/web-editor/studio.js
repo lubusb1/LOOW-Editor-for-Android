@@ -576,6 +576,9 @@ function renderStudioLibrary() {
   if (!shown) box.appendChild(el('div', 'hint', '没有匹配的节点'));
   const countEl = document.getElementById('studio-lib-count');
   if (countEl) countEl.textContent = String(shown);
+
+  // 兜底：清掉任何残留的拖拽胶囊（历史版本在 pointercancel 时会留下）
+  document.querySelectorAll('.st-ghost').forEach(g => g.remove());
 }
 
 /** 图层库：列出当前预设的全部图层，点击/拖拽都会生成「图层引用」节点。 */
@@ -647,23 +650,46 @@ function renderStudioLayerList(box) {
 }
 function startLibraryDrag(ev, type, presetTarget) {
   const def = STUDIO_DEFS[type];
-  const ghost = el('div', 'st-ghost');
-  ghost.innerHTML = '<span>' + def.icon + '</span><b>' + def.name +
-    (presetTarget ? ' · ' + presetTarget : '') + '</b>';
-  document.body.appendChild(ghost);
+  // 手机上不生成"跟随手指的小胶囊"：
+  //   - 指尖本来就盖住它，等于看不见；
+  //   - 触屏很容易触发 pointercancel（浏览器接管手势），一旦没走到 pointerup，
+  //     胶囊就永久留在屏幕上——用户看到的就是"莫名其妙的小弹窗"。
+  const mobileShell = document.documentElement.classList.contains('loow-mobile');
+  let ghost = null;
+  if (!mobileShell) {
+    ghost = el('div', 'st-ghost');
+    ghost.innerHTML = '<span>' + def.icon + '</span><b>' + def.name +
+      (presetTarget ? ' · ' + presetTarget : '') + '</b>';
+    document.body.appendChild(ghost);
+  }
   studio.dragGhost = { type, ghost, moved: false, presetTarget: presetTarget };
 
   const move = e => {
-    studio.dragGhost.moved = true;
-    ghost.style.left = (e.clientX + 12) + 'px';
-    ghost.style.top = (e.clientY + 12) + 'px';
+    if (studio.dragGhost) studio.dragGhost.moved = true;
+    if (ghost) {
+      ghost.style.left = (e.clientX + 12) + 'px';
+      ghost.style.top = (e.clientY + 12) + 'px';
+    }
   };
   move(ev);
 
-  const up = e => {
+  const cleanup = () => {
     document.removeEventListener('pointermove', move);
     document.removeEventListener('pointerup', up);
-    if (ghost.parentNode) ghost.parentNode.removeChild(ghost);
+    document.removeEventListener('pointercancel', cancel);
+    if (ghost && ghost.parentNode) ghost.parentNode.removeChild(ghost);
+  };
+
+  // pointercancel：手势被系统接管（滚动、返回手势…）时只有它，没有 pointerup。
+  // 以前只监听 pointerup，胶囊就留在屏幕上，而且 dragGhost 一直是非 null，
+  // 连带把"点击库项建节点"也卡死了。
+  const cancel = () => {
+    cleanup();
+    studio.dragGhost = null;
+  };
+
+  const up = e => {
+    cleanup();
     const canvas = document.getElementById('studio-canvas');
     const rect = canvas ? canvas.getBoundingClientRect() : null;
     const inside = rect && e.clientX >= rect.left && e.clientX <= rect.right &&
@@ -678,6 +704,7 @@ function startLibraryDrag(ev, type, presetTarget) {
   };
   document.addEventListener('pointermove', move);
   document.addEventListener('pointerup', up);
+  document.addEventListener('pointercancel', cancel);
 }
 
 function addStudioNode(type, px, py, presetTarget) {

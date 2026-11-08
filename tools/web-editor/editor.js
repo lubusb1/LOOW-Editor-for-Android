@@ -482,13 +482,25 @@ function wireSvgDropZone() {
   });
 }
 /** #abc / #aabbcc / #aabbccdd → #AABBCCDD；识别不了就返回空串。 */
+const NAMED_COLORS = {
+  black: '#FF000000', white: '#FFFFFFFF', red: '#FFFF0000', green: '#FF00A651',
+  blue: '#FF1E6FFF', yellow: '#FFFFD400', orange: '#FFFF8A00', purple: '#FF8A4DFF',
+  gray: '#FF808080', grey: '#FF808080', pink: '#FFFF6FA5', cyan: '#FF00D0FF',
+};
+
 function normalizeHexColor(value) {
   const raw = String(value || '').trim();
+  const named = NAMED_COLORS[raw.toLowerCase()];
+  if (named) return named;
+  // currentColor / inherit / none 都拿不到确定颜色，交给上层退回默认色
+  if (/^(currentcolor|inherit|none|transparent)$/i.test(raw)) return '';
   const m = raw.match(/^#([0-9a-fA-F]{3,8})$/);
   if (!m) return '';
   let hex = m[1];
   if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
-  if (hex.length === 6) hex += 'FF';
+  // 本项目的颜色是 #AARRGGBB（alpha 在前）：6 位要**前面**补 FF。
+  // 曾经写在末尾，结果 #D14747FF 被当成 alpha=D1 的蓝紫色。
+  if (hex.length === 6) hex = 'FF' + hex;
   if (hex.length !== 8) return '';
   return '#' + hex.toUpperCase();
 }
@@ -562,25 +574,32 @@ async function insertSvg() {
   }
 
   if (extracted) {
+    if (extracted.strokeWidth > 0 && !extracted.strokeColor) {
+      svgMessage('提示：stroke 是 currentColor/命名色，已按白色描边插入，可在属性面板改颜色', true);
+    }
     const node = {
       id: uniqueId('svg'),
       type: 'rect',
       visible: true,
       x: 25, y: 25,
       width: 30, height: 30,
-      color: '#FFFFFFFF',
+      // 线框图标（fill="none" + stroke）必须把描边带过来，否则轮廓会被填成实心块。
+      // 颜色优先用 SVG 的 stroke；currentColor / 命名色识别不了时退回白色（黑底可见）。
+      color: extracted.strokeColor || '#FFFFFFFF',
       opacity: 1,
       shape: 'path',
       path: extracted.d,
       viewBox: extracted.viewBox
     };
+    if (extracted.strokeWidth > 0) node.strokeWidth = extracted.strokeWidth;
     placeInTarget(node, 1);
     insertTargetList().push(node);
     state.sel.rectId = node.id;
     state.sel.channel = -1;
     closeSvgPanel();
     renderAll();
-    status('已插入矢量路径（viewBox ' + extracted.viewBox + '）');
+    status('已插入矢量路径（viewBox ' + extracted.viewBox + '，' +
+      (extracted.strokeWidth > 0 ? '描边 ' + extracted.strokeWidth : '填充') + '）');
     return;
   }
 
@@ -702,6 +721,36 @@ function viewBoxSize(node, which) {
   return 24;
 }
 
+
+/**
+ * 羽化结果缓存。
+ *
+ * 为什么需要：羽化是逐像素的 JS 循环，而"柔光雾"这类装饰每一帧结果都一样。
+ * 之前每帧重算，单层 700ms，点一下画布要等两三秒。
+ *
+ * 安全性：缓存键只包含"几何 + 颜色 + 羽化"这些**不随时间变化**的字段；
+ * 缩放/旋转/透明度都在外层 transform 上做，不影响这份像素，所以缓存不会挡住动画。
+ */
+const featherCache = new Map();
+const FEATHER_CACHE_MAX = 48;
+
+/** 取一份已羽化好的 canvas（命中缓存则直接返回）。 */
+function featheredCanvas(key, wFull, hFull, build) {
+  const hit = featherCache.get(key);
+  if (hit) return hit;
+  const canvasEl = document.createElement('canvas');
+  canvasEl.width = wFull;
+  canvasEl.height = hFull;
+  const c = canvasEl.getContext('2d');
+  build(c);
+  if (featherCache.size >= FEATHER_CACHE_MAX) featherCache.clear();
+  featherCache.set(key, canvasEl);
+  return canvasEl;
+}
+
+/** 预设/节点改动后调用：形状或颜色变了，旧缓存必须失效。 */
+function invalidateFeatherCache() { featherCache.clear(); }
+
 /**
  * PS 式像素羽化：从四周向内 [bandPx] 像素做渐变，最外圈 alpha = 0，内部不动。
  *
@@ -713,22 +762,36 @@ function viewBoxSize(node, which) {
  */
 
 
-function drawWithAlphaFeather(wPx, hPx, bandPx, drawContent, outlinePoints) {
-  const w = Math.max(1, Math.round(wPx));
-  const h = Math.max(1, Math.round(hPx));
+function drawWithAlphaFeather(wPx, hPx, bandPx, drawContent, outlinePoints, target) {
+  const out = target || ctx;
+  const wFull = Math.max(1, Math.round(wPx));
+  const hFull = Math.max(1, Math.round(hPx));
+
+  // 大元素 + 大羽化时先降采样再羽化：
+  // 羽化只是一条 alpha 渐变带，降到 1/4 边长肉眼几乎看不出差别，
+  // 但逐像素循环的像素数少 16 倍 —— 实测把 700ms 的单层压到几十毫秒。
+  const area = wFull * hFull;
+  const fullQuality = typeof window !== 'undefined' && window.__LOOW_FEATHER_FULL;
+  const s = (!fullQuality && area > 68000) ? Math.max(0.22, Math.sqrt(68000 / area)) : 1;
+  const w = Math.max(1, Math.round(wFull * s));
+  const h = Math.max(1, Math.round(hFull * s));
 
   const content = document.createElement("canvas");
   content.width = w;
   content.height = h;
   const cctx = content.getContext("2d");
+  if (s !== 1) cctx.scale(s, s);
   drawContent(cctx);
 
-  const band = Math.max(1, Math.round(bandPx));
+  const band = Math.max(1, Math.round(bandPx * s));
   const image = cctx.getImageData(0, 0, w, h);
   const data = image.data;
 
   // 有轮廓（蒙版/圆角）时沿轮廓羽化，否则沿矩形边缘（默认逻辑）
-  const outline = outlinePoints && outlinePoints.length >= 3 ? outlinePoints : null;
+  // 轮廓点也是"全分辨率坐标"，要跟着一起缩放
+  const outline = outlinePoints && outlinePoints.length >= 3
+    ? outlinePoints.map(([x, y]) => [x * s, y * s])
+    : null;
 
   for (let y = 0; y < h; y++) {
     const py = y + 0.5;
@@ -758,7 +821,12 @@ function drawWithAlphaFeather(wPx, hPx, bandPx, drawContent, outlinePoints) {
   }
 
   cctx.putImageData(image, 0, 0);
-  ctx.drawImage(content, 0, 0);
+  if (s === 1) {
+    out.drawImage(content, 0, 0);
+  } else {
+    // 放大回原始尺寸：alpha 渐变本身是平滑的，放大不会出现锯齿
+    out.drawImage(content, 0, 0, wFull, hFull);
+  }
 }
 
 /** 射线法：点是否在多边形内。 */
@@ -2064,8 +2132,28 @@ function drawNode(node) {
     };
 
     if (featherPx > 0) {
-      // 形状羽化同样只柔化边缘 alpha
-      drawWithAlphaFeather(wPx, hPx, featherPx, offCtx => paintShape(offCtx), effectivePointsOf(node, wPx, hPx));
+      // 形状羽化同样只柔化边缘 alpha；结果按「几何+颜色」缓存 ——
+      // 柔光雾这类静态装饰只算一次，之后每帧都是一次 drawImage
+      const fk = [
+        'shape', node.id,
+        Math.round(wPx), Math.round(hPx), Math.round(featherPx),
+        node.color, node.gradient || '', node.shape || 'rect', node.sides || 0,
+        node.cornerRadius || 0, node.mask || '',
+        node.maskX || 0, node.maskY || 0, node.maskW ?? 100, node.maskH ?? 100
+      ].join('|');
+      const useCache = !(typeof window !== 'undefined' && window.__LOOW_FEATHER_FULL);
+      const cached = useCache ? featheredCanvas(fk, Math.max(1, Math.round(wPx)), Math.max(1, Math.round(hPx)), c => {
+        drawWithAlphaFeather(wPx, hPx, featherPx, offCtx => paintShape(offCtx), effectivePointsOf(node, wPx, hPx), c);
+      }) : (() => {
+        const cv = document.createElement('canvas');
+        cv.width = Math.max(1, Math.round(wPx)); cv.height = Math.max(1, Math.round(hPx));
+        const c2 = cv.getContext('2d');
+        drawWithAlphaFeather(wPx, hPx, featherPx, offCtx => paintShape(offCtx), effectivePointsOf(node, wPx, hPx), c2);
+        return cv;
+      })();
+      ctx.globalAlpha = clamp(opacity, 0, 1);
+      ctx.drawImage(cached, 0, 0, wPx, hPx);
+      ctx.globalAlpha = 1;
     } else {
       paintShape(null);
     }
@@ -2308,19 +2396,82 @@ function renderTemplate(input) {
   return text;
 }
 
+/**
+ * 按宽度折行（与引擎 scene/TextWrap.kt 同一套规则）。
+ *
+ * 为什么两边都要写：编辑器是画布预览，引擎是最终画面；只要有一边不会折行，
+ * 就会出现"编辑器里排好了、手机上溢出了"——这正是 G-001 要修的问题。
+ * 规则：逐字符累加宽度；拉丁词优先在空格处断开；超出最大行数时截断并加省略号。
+ */
+/** 面板里的小提示：当前折行设置。 */
+function nowrapHint(rect) {
+  const n = Number(rect.maxLines) || 0;
+  return n > 0 ? `最多 ${n} 行` : '不折行';
+}
+
+function wrapTextToWidth(use, text, maxWidthPx, maxLines) {
+  const limit = Math.max(0, Math.min(20, Math.round(Number(maxLines) || 0)));
+  if (!limit || maxWidthPx <= 0) return String(text).split('\n');
+  const ELLIPSIS = '…';
+  const measure = s => use.measureText(s).width;
+
+  const fitPrefix = s => {
+    let fit = 0;
+    while (fit < s.length) {
+      const next = fit + (s.codePointAt(fit) > 0xffff ? 2 : 1);
+      if (measure(s.slice(0, next)) > maxWidthPx) break;
+      fit = next;
+    }
+    return fit;
+  };
+  const ellipsize = s => {
+    let end = s.length;
+    while (end > 0) {
+      const candidate = s.slice(0, end).trimEnd() + ELLIPSIS;
+      if (measure(candidate) <= maxWidthPx) return candidate;
+      end -= s.codePointAt(end - 1) > 0xffff ? 2 : 1;
+    }
+    return ELLIPSIS;
+  };
+
+  const out = [];
+  for (const paragraph of String(text).split('\n')) {
+    if (out.length >= limit) break;
+    let rest = paragraph.trim();
+    if (!rest) { out.push(''); continue; }
+    for (;;) {
+      if (out.length >= limit) break;
+      if (measure(rest) <= maxWidthPx) { out.push(rest); break; }
+      if (limit - out.length === 1) { out.push(ellipsize(rest)); break; }
+      let cut = fitPrefix(rest);
+      if (cut <= 0) { out.push(ellipsize(rest)); break; }
+      // 拉丁词尽量在空格处断（CJK 没有空格，循环自然不命中）
+      for (let i = cut - 1; i >= Math.floor(cut / 2); i--) {
+        if (rest[i] === ' ') { cut = i + 1; break; }
+      }
+      out.push(rest.slice(0, cut).trimEnd());
+      rest = rest.slice(cut).trimStart();
+      if (!rest) break;
+    }
+  }
+  if (!out.length) out.push('');
+  return out;
+}
+
 function drawTextLocal(node, opacity, wPx, hPx, target) {
   // target 允许把文字画到离屏画布（羽化/蒙版需要），默认画在主画布
   const use = target || ctx;
   const color = parseColor(node.color || '#FFFFFFFF');
   const fontPx = (node.fontSize / 100) * canvas.width;
-  // 与 drawTextNode 一致：画布显示解析后的值（{sys.x:00} → 60），输入框保留原始模板
-  const lines = renderTemplate(node.text || '').split('\n');
-  const lineH = fontPx * TEXT_LINE_HEIGHT;
-  const totalH = lineH * lines.length;
-
   use.globalAlpha = clamp(opacity, 0, 1) * color.a;
   use.fillStyle = `rgb(${color.r},${color.g},${color.b})`;
   use.font = `${fontPx}px system-ui, "Microsoft YaHei", sans-serif`;
+
+  // 与 drawTextNode 一致：画布显示解析后的值（{sys.x:00} → 60），输入框保留原始模板。
+  // 设好字体之后再折行：折行要用真实字宽，否则编辑器与手机断点会不一致。
+  const lines = wrapTextToWidth(use, renderTemplate(node.text || ''), wPx, node.maxLines);
+  const lineH = fontPx * TEXT_LINE_HEIGHT;
+  const totalH = lineH * lines.length;
   use.textBaseline = 'top';
 
   lines.forEach((line, i) => {
@@ -2638,7 +2789,7 @@ function scheduleDraw() {
 }
 
 // ---------------------------------------------------------------- 属性 ID 接口
-// 规范见 docs/property-ids.md：总 ID = 图层名，子 ID = 短属性名，用点连接。
+// 规范：总 ID = 图层名，子 ID = 短属性名，用点连接。
 // 界面上不显示，只给写函数时用；这样"引用某个属性"不必记 JSON 字段全名。
 const ATTR_KEYS = {
   x: 'x', y: 'y', w: 'width', h: 'height',
@@ -2813,6 +2964,61 @@ function canvasHitAtClient(clientX, clientY) {
   const y = (clientY - box.top) * (canvas.height / box.height);
   try { return hitRect(x, y); } catch { return null; }
 }
+
+/**
+ * 这一下是不是点在缩放手柄上。
+ *
+ * 为什么要单独判断：手柄画在图层**四周**，按住边缘手柄拖拽时，
+ * `canvasHitAtClient` 常常命中不到任何图层（点在图层外面），于是面板的
+ * 长按计时器照常启动——拖手柄的同时整块预览也跟着位移（老问题复现）。
+ */
+function handleHitAtClient(clientX, clientY) {
+  const box = canvas.getBoundingClientRect();
+  if (!box.width || !box.height) return false;
+  // 手柄可能画在画布边缘外一点，这里多给 24px 余量再换算
+  const m = 24;
+  if (clientX < box.left - m || clientX > box.right + m) return false;
+  if (clientY < box.top - m || clientY > box.bottom + m) return false;
+  const x = (clientX - box.left) * (canvas.width / box.width);
+  const y = (clientY - box.top) * (canvas.height / box.height);
+  try { return hitHandle(x, y) >= 0; } catch { return false; }
+}
+
+/**
+ * 取消选中。
+ *
+ * 为什么必须单独抽出来：预设里几乎总有一块铺满画布的背景板，
+ * 于是 `hitRect` 在画布内**永远**能命中图层，"点空白取消选中"那条分支实际走不到。
+ * 真正可用的入口是点击画布外的留白（预览面板的深色边框、左侧画布区的空白处）。
+ */
+function clearSelection() {
+  if (!state.sel.rectId) return;
+  state.sel.rectId = null;
+  state.sel.channel = -1;
+  state.sel.keyIndex = -1;
+  state.drag = null;
+  if (typeof hideRuleDetail === 'function') hideRuleDetail();
+  renderAll();
+  scheduleDraw();
+}
+
+// 点击画布外的留白 = 取消选中；控件上的点击不处理（否则一拖滑条就丢选中）
+(() => {
+  const wrap = canvas.closest('.canvas-wrap');
+  if (!wrap) return;
+  wrap.addEventListener('pointerdown', ev => {
+    if (ev.target === canvas) return;                                     // 画布内交给画布自己判命中
+    if (ev.target.closest('input, button, select, textarea, a, .preview-notch, .st-float-bar')) return;
+    clearSelection();
+  });
+})();
+
+// Esc 也能取消选中（在输入框里按 Esc 不生效，避免打断输入）
+window.addEventListener('keydown', ev => {
+  if (ev.key !== 'Escape') return;
+  if (ev.target && ev.target.closest && ev.target.closest('input, textarea, select')) return;
+  clearSelection();
+});
 
 canvas.addEventListener('pointerdown', ev => {
   const p = canvasPos(ev);
@@ -3440,12 +3646,27 @@ function setupGraphShell() {
   panel.addEventListener('pointerdown', ev => {
     if (ev.button !== 0) return;
     if (ev.target === handle) return;      // 圆点有自己的一套
-    // 画布上按到图层 = 要拖图层，不能再给"拖整块预览"计时
-    if (ev.target === canvas && canvasHitAtClient(ev.clientX, ev.clientY)) return;
+    // 画布上按到图层/缩放手柄 = 要动图层，不能再给"拖整块预览"计时
+    if (ev.target === canvas && (canvasHitAtClient(ev.clientX, ev.clientY) || handleHitAtClient(ev.clientX, ev.clientY))) return;
     clearTimeout(pressTimer);
-    pressTimer = setTimeout(() => beginGesture(ev, 'move'), 260);
-    const cancel = () => { clearTimeout(pressTimer); window.removeEventListener('pointerup', cancel); };
+    const startX = ev.clientX;
+    const startY = ev.clientY;
+    const cancel = () => {
+      clearTimeout(pressTimer);
+      window.removeEventListener('pointerup', cancel);
+      window.removeEventListener('pointermove', cancelIfMoved);
+    };
+    // 长按的判定要包含"没怎么动"：拖动图层/手柄时指针必然移动，
+    // 一旦超过 6px 就放弃"移动预览"，避免一边缩放一边整块面板跑掉。
+    const cancelIfMoved = mev => {
+      if (Math.hypot(mev.clientX - startX, mev.clientY - startY) > 6) cancel();
+    };
+    pressTimer = setTimeout(() => {
+      window.removeEventListener('pointermove', cancelIfMoved);
+      beginGesture(ev, 'move');
+    }, 260);
     window.addEventListener('pointerup', cancel);
+    window.addEventListener('pointermove', cancelIfMoved);
   });
 
   // ---- 蓝色圆点：长按拖动 ----
@@ -3486,15 +3707,21 @@ function setupGraphShell() {
   };
 
   // 面板本体双击：同样折叠（保留，方便在大面板上直接双击）
+  //
+  // 手机上**必须关掉**：触屏的"双击"就是快速点两下，画布上点两下是很自然的
+  // 操作（连点选中、误触），结果整块画板缩成 3% 变成黑的，用户以为画没了。
+  // 而且折叠状态会存进 shellState，重开 App 还是黑的 —— 只能靠"再双击一次"救回来。
   panel.addEventListener('dblclick', ev => {
     if (mode) return;                       // 拖动刚结束的手抖不触发
+    if (document.documentElement.classList.contains('loow-mobile')) return;
     ev.stopPropagation();
     toggleCollapse();
   });
 
-  // 蓝点双击：折叠 / 展开（用户指定入口）
+  // 蓝点双击：折叠 / 展开（用户指定入口）；手机上同理不接
   if (handle) {
     handle.addEventListener('dblclick', ev => {
+      if (document.documentElement.classList.contains('loow-mobile')) return;
       ev.stopPropagation();
       ev.preventDefault();
       toggleCollapse();
@@ -3976,13 +4203,16 @@ function renderInspector() {
   const box = document.getElementById('inspector');
   box.innerHTML = '';
 
+  // 字段默认追加到 #inspector；视差那一段会临时把落点换成一个 wrapper，
+  // 这样手机端可以整段挪到面板末尾，而不用去猜哪几行属于视差。
+  let fieldHost = box;
   const field = (label, nodes, extraClass) => {
     const f = el('div', 'field' + (extraClass ? ' ' + extraClass : ''));
     f.appendChild(el('label', null, label));
     const pair = el('div', 'pair');
     nodes.forEach(n => pair.appendChild(n));
     f.appendChild(pair);
-    box.appendChild(f);
+    fieldHost.appendChild(f);
     return f;
   };
 
@@ -3991,8 +4221,14 @@ function renderInspector() {
   // 分散到面板首尾反而难对照。
   const rect = selectedRect();
 
-  // 全局段 + （选中时）该图层的"独立"勾选与独立参数，都在这一处渲染
-  renderParallaxGlobals(box, field, rect);
+  // 全局段 + （选中时）该图层的"独立"勾选与独立参数，都在这一处渲染。
+  // 包一层 wrapper：桌面端顺序不变，手机端由 mobile.js 整段挪到末尾
+  //（手机上先看到"位置/尺寸/颜色"才合理，视差属于进阶设置）。
+  const parallaxBlock = el('div', 'parallax-block');
+  fieldHost = parallaxBlock;
+  renderParallaxGlobals(parallaxBlock, field, rect);
+  fieldHost = box;
+  box.appendChild(parallaxBlock);
 
   if (!rect) { box.appendChild(el('div', 'hint', '点画布上的矩形，或左栏图层')); return; }
 
@@ -4000,9 +4236,15 @@ function renderInspector() {
 
   // 每个属性：[重置 ↺] [关键帧 ◇] [滑条] [数值输入]
   // 数值输入保留，滑条用于快速拖；两者写的是同一个值。
+  state.editBase = state.editBase || {};
   CHANNELS.forEach((channel, index) => {
     const armed = channelArmed(clip, channel);
+    const baseMode = armed && !!state.editBase[channel.key];
     const current = channelValueAt(clip, rect, channel, state.playhead);
+    // 「初」模式下输入框显示静态值，否则显示播放头处的采样值
+    if (baseMode) {
+      for (const prop of channel.props) current[prop] = staticValue(rect, prop);
+    }
 
     const reset = el('button', 'icon-btn', '↺');
     reset.title = '重置为默认值（' + RESET_LABELS[channel.key] + '）';
@@ -4014,6 +4256,21 @@ function renderInspector() {
     diamond.onclick = () => toggleChannel(index);
 
     const nodes = [reset, diamond];
+    if (armed) {
+      // 关键帧通道：显式区分"改当前帧"和"改初始值"
+      const mode = el('button', 'icon-btn', baseMode ? '初' : '帧');
+      mode.title = baseMode
+        ? '正在改初始值（静态值），点一下改回"当前帧"'
+        : '正在改播放头处的关键帧，点一下改"初始值"（改完会同步 t=0）';
+      if (baseMode) mode.style.cssText = 'background:#3a2f5c;border-color:#8a6bff;color:#c9b8ff;';
+      mode.onclick = () => {
+        state.editBase[channel.key] = !baseMode;
+        invalidateOverrides();
+        renderAll();
+        scheduleDraw();
+      };
+      nodes.push(mode);
+    }
 
     if (channel.key === 'position') {
       nodes.push(
@@ -4092,6 +4349,14 @@ function renderInspector() {
       })()
     ]);
 
+    field('自动折行（0=关）', [numberField(Number(rect.maxLines) || 0, v => {
+      // 0 = 只按 \n 分行（旧行为）；1~20 = 按宽度折行，超出加省略号
+      const n = clamp(Math.round(v), 0, 20);
+      if (n > 0) rect.maxLines = n; else delete rect.maxLines;
+      renderAll(true);
+      draw();
+    }), el('span', 'badge', (Number(rect.maxLines) || 0) > 0 ? nowrapHint(rect) : '不折行')]);
+
     field('宽度', [numberField(round1(rect.width * effectiveScale(rect)), v => { rect.width = visualToBase(v, effectiveScale(rect)); })]);
 
     // 文字图层同样支持 蒙版 / 圆角 / 羽化（与图片、形状同一套语义）
@@ -4101,16 +4366,8 @@ function renderInspector() {
     // 勾上「正圆」就把宽高锁在一起，避免改完边长变成一个"看不出是圆"的椭圆。
     const isEllipse = (rect.shape || 'rect') === 'ellipse';
     const lockCircle = isEllipse && Math.abs(rect.width - rect.height) < 0.5;
-    const applyWidth = v => {
-      const base = visualToBase(v, effectiveScale(rect));
-      rect.width = base;
-      if (lockCircle) rect.height = base;
-    };
-    const applyHeight = v => {
-      const base = visualToBase(v, effectiveScale(rect));
-      rect.height = base;
-      if (lockCircle) rect.width = base;
-    };
+    // 注：原本这里还有 applyWidth / applyHeight（供"实际尺寸"输入组用）。
+    // G-005 删掉那组输入后它们没有调用方了，一并删除，避免下次有人误接。
     // 圆角 / 蒙版 / 羽化：与文字图层共用同一套控件（形状、图片都走这里）
     maskFeatherControls(rect, field);
 
@@ -4121,11 +4378,16 @@ function renderInspector() {
         draw();
       }), el('span', 'badge', (rect.strokeWidth || 0) > 0 ? '描边' : '填充')]);
     }
-    field('宽 / 高', [
-      // 显示**实际大小**（基准 × 缩放），和画布上看到的一致
-      numberField(round1(rect.width * effectiveScale(rect)), applyWidth),
-      numberField(round1(rect.height * effectiveScale(rect)), applyHeight)
-    ]);
+    // G-005：只保留上面那组输入。这里只**显示**实际尺寸（基准 × 缩放），
+    // 两个输入框会让"改了一个另一个不刷新"，用户会以为数值对不上。
+    {
+      const scalePct = Math.round(effectiveScale(rect) * 100);
+      box.appendChild(el('div', 'hint',
+        '基准 ' + round1(rect.width) + ' × ' + round1(rect.height) +
+        '，缩放 ' + scalePct + '% → 实际 ' +
+        round1(rect.width * effectiveScale(rect)) + ' × ' + round1(rect.height * effectiveScale(rect))
+      ));
+    }
 
     if (isEllipse) {
       const circleBox = document.createElement('input');
@@ -4532,6 +4794,26 @@ function changeValue(rect, channel, prop, value, deferTimeline) {
   const range = PROPERTY_RANGES[prop] || [-1e4, 1e4];
   const clamped = clamp(value, range[0], range[1]);
 
+  // 「初始值」模式：直接改静态值，并同步 t=0 的那一帧。
+  // 不加这个入口的话，通道一旦有关键帧，所有输入都会被翻译成"在播放头落帧"，
+  // 用户想改动画开始前的样子就无处可改（实测：改完切走再切回来又变回旧值）。
+  if (armed && state.editBase && state.editBase[channel.key]) {
+    rect[prop] = round1(clamped);
+    const track = trackFor(clip, prop);
+    if (track && track.keyframes.length) {
+      const atZero = track.keyframes.find(k => Math.abs(k.t) < 0.015);
+      if (atZero) atZero.value = round1(clamped);
+      else {
+        track.keyframes.push({ t: 0, value: round1(clamped), easing: 'linear' });
+        sortTrack(track);
+      }
+    }
+    invalidateOverrides();
+    scheduleDraw();
+    if (!deferTimeline) renderTimeline();
+    return;
+  }
+
   if (!armed) {
     rect[prop] = round1(clamped);
     scheduleDraw();
@@ -4573,6 +4855,61 @@ function renderClipGroupSelect(rect) {
   });
   if (clipFor(rect)) sel.value = clipFor(rect).id;
 }
+/**
+ * 时间标尺：在 0 / 25% / 50% / 75% / 100% 处标出秒数。
+ *
+ * 没有它，用户只能靠猜"这个菱形落在时间轴的哪儿"——尤其手机上轨道只有几行，
+ * 连"这是第几秒"都没地方看。
+ */
+function timelineRuler(clip) {
+  const durationMs = clip.tracks[0]?.durationMs || 2000;
+  const row = el('div', 'tl-ruler');
+  row.appendChild(el('div', 'tl-label', '时间'));
+  const lane = el('div', 'tl-ruler-lane');
+  const steps = 4;
+  for (let i = 0; i <= steps; i += 1) {
+    const ratio = i / steps;
+    const tick = el('div', 'tl-tick');
+    tick.style.left = (ratio * 100) + '%';
+    const seconds = (durationMs * ratio) / 1000;
+    tick.appendChild(el('span', null, seconds.toFixed(seconds >= 10 ? 0 : 1) + 's'));
+    lane.appendChild(tick);
+  }
+  row.appendChild(lane);
+  lane.onpointerdown = ev => startTimelineScrub(ev, lane, null);
+  return row;
+}
+
+/**
+ * 拖动播放头。
+ *
+ * 为什么必须 preventDefault：不拦的话，手指一横移浏览器就当成"滚动时间轴"，
+ * 直接发 pointercancel 把我们的手势打断——表现就是"红色指针拖两下就断了"。
+ * 同时补 pointercancel 收尾，否则监听器会越积越多。
+ */
+function startTimelineScrub(ev, element, channelIndex) {
+  ev.preventDefault();
+  // 元素每次重绘都会被替换，所以先把几何量抓下来，整个拖动过程都用这一份
+  const box = element.getBoundingClientRect();
+  const scrub = clientX => {
+    state.playhead = clamp((clientX - box.left) / box.width, 0, 1);
+    if (channelIndex !== null) state.sel.channel = channelIndex;
+    renderTimeline();
+    scheduleDraw();
+  };
+  scrub(ev.clientX);
+  const move = e => scrub(e.clientX);
+  const finish = () => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', finish);
+    window.removeEventListener('pointercancel', finish);
+    renderAll();
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', finish);
+  window.addEventListener('pointercancel', finish);
+}
+
 function renderTimeline() {
   const body = document.getElementById('tl-body');
   body.innerHTML = '';
@@ -4591,6 +4928,9 @@ function renderTimeline() {
   document.getElementById('trigger').value = clip.trigger.type;
   document.getElementById('loop').value = clip.tracks[0]?.loop || 'loop';
   document.getElementById('duration').value = String(clip.tracks[0]?.durationMs || 2000);
+
+  // 标尺放在所有轨道之上（sticky），滚动时也能看见秒数
+  body.appendChild(timelineRuler(clip));
 
   let hasArmed = false;
 
@@ -4644,24 +4984,7 @@ function renderTimeline() {
     head.style.left = (state.playhead * 100) + '%';
     lane.appendChild(head);
 
-    lane.onpointerdown = ev => {
-      const box = lane.getBoundingClientRect();
-      const scrub = clientX => {
-        state.playhead = clamp((clientX - box.left) / box.width, 0, 1);
-        state.sel.channel = chIndex;
-        renderTimeline();
-        scheduleDraw();
-      };
-      scrub(ev.clientX);
-      const move = e => scrub(e.clientX);
-      const up = () => {
-        window.removeEventListener('pointermove', move);
-        window.removeEventListener('pointerup', up);
-        renderAll();
-      };
-      window.addEventListener('pointermove', move);
-      window.addEventListener('pointerup', up);
-    };
+    lane.onpointerdown = ev => startTimelineScrub(ev, lane, chIndex);
 
     row.appendChild(lane);
     body.appendChild(row);
@@ -4962,7 +5285,7 @@ function download(name, text) {
 // ================= 触发器规则校验 =================
 // 引擎在加载时也会校验（带 JSON 路径），但用户不应该等到"发到手机才报错"。
 // 这里做静态检查：目标/变量/函数是否存在、动作类型是否支持、变量是否有环。
-const RULE_ACTION_TYPES = ['setVar', 'setVisible', 'setProperty', 'playAnimation', 'launchApp', 'openUri', 'call'];
+const RULE_ACTION_TYPES = ['setVar', 'setVisible', 'setProperty', 'playAnimation', 'launchApp', 'openUri', 'mediaControl', 'call'];
 
 function validateRules() {
   const out = [];
@@ -4994,7 +5317,10 @@ function validateRules() {
 
     (r.then || []).forEach((a, k) => {
       const at = `${where} 第 ${k + 1} 个动作`;
-      if (!RULE_ACTION_TYPES.includes(a.type)) {
+      if (a.type === 'mediaControl' && !MEDIA_COMMANDS.some(([v]) => v === a.command)) {
+      errors.push(`${at}：音乐控制的命令无效（${a.command || '空'}）`);
+    }
+    if (!RULE_ACTION_TYPES.includes(a.type)) {
         out.push(`${at}：未知类型「${a.type}」`);
         return;
       }
@@ -5087,12 +5413,23 @@ function pruneForExport() {
       if (Array.isArray(compiled.model.bindings) && compiled.model.bindings.length) {
         doc.interactions.bindings = compiled.model.bindings;
       }
+      const compiledRules = Array.isArray(compiled.model.rules) ? compiled.model.rules : [];
+      const graphNodes = ((doc.interactions.studio && doc.interactions.studio.nodes) || []).length;
+      const existingRules = Array.isArray(doc.interactions.rules) ? doc.interactions.rules.length : 0;
       if (compiled.errors && compiled.errors.length) {
         console.warn('[导出] 触发器编译有错误，已跳过写入 rules：', compiled.errors);
-      } else {
-        doc.interactions.rules = compiled.model.rules;
+      } else if (compiledRules.length || !graphNodes) {
+        // 有产出就覆盖；图被清空（nodes=0）也清空规则——这是用户主动删掉的
+        doc.interactions.rules = compiledRules;
         doc.interactions.vars = compiled.model.vars;
-        console.log('[导出] 触发器已编译：' + compiled.model.rules.length + ' 条规则');
+        console.log('[导出] 触发器已编译：' + compiledRules.length + ' 条规则');
+      } else if (existingRules) {
+        // 图里只剩没连线的遗留节点，编译必然 0 条。
+        // 这种情况**不能**覆盖 rules：会把预设里原本能用的规则（例如媒体控制）清空。
+        console.warn('[导出] 工作台没有产出规则（只有未连线的节点），保留原有 ' + existingRules + ' 条规则');
+        if (typeof status === 'function') status('工作台没有连线的节点，已保留原有 ' + existingRules + ' 条规则');
+      } else {
+        doc.interactions.rules = compiledRules;
       }
     } catch (err) {
       console.warn('[导出] 触发器编译失败，已跳过：', err);
@@ -5123,6 +5460,16 @@ function pruneForExport() {
   } else if (hasTriggers) {
     doc.interactions.formatVersion = usesLoops ? '0.5' : '0.4';
   }
+  // 0.8：绑定表达式；0.9：媒体控制。只升不降 —— 否则用了新能力却报旧版本号，
+  // 老 App 会按旧语义解析，得到"动作被忽略"这种最难查的症状。
+  const RANK = { '0.1': 1, '0.2': 2, '0.3': 3, '0.4': 4, '0.5': 5, '0.6': 6, '0.7': 7, '0.8': 8, '0.9': 9 };
+  const usesExprBinding = (doc.interactions.bindings || []).some(b => b && typeof b.expr === 'string' && b.expr.trim());
+  const usesMediaControl = (doc.interactions.rules || []).some(r =>
+    (r.then || []).some(a => a && a.type === 'mediaControl'));
+  let interactionsVersion = doc.interactions.formatVersion || '0.1';
+  if (usesExprBinding && (RANK[interactionsVersion] || 0) < 8) interactionsVersion = '0.8';
+  if (usesMediaControl) interactionsVersion = '0.9';
+  doc.interactions.formatVersion = interactionsVersion;
 
   // 关系图的节点偏移是纯编辑期数据，不能进预设（手机上用不到，还会白占体积）
   if (doc.interactions) delete doc.interactions.graphOffsets;
@@ -5142,8 +5489,9 @@ function pruneForExport() {
   });
   doc.interactions.animations = doc.interactions.animations.filter(c => c.tracks.length);
 
-  // 容器是 0.2 才有的能力，导出统一用 0.2（引擎同时接受 0.1）
-  doc.scene.formatVersion = '0.2';
+  // 容器是 0.2 的能力、文本自动折行是 0.3 的能力；
+  // 导出统一用 0.3（引擎接受 0.1 / 0.2 / 0.3，老版本 App 不予此文件较真）。
+  doc.scene.formatVersion = '0.3';
 
   // circleLock 是编辑器的等比开关，手机端只看宽高；不剥掉会污染预设 JSON
   const stripEditorFields = nodes => {
@@ -5448,6 +5796,7 @@ function importJson(text) {
   else if (data && data.engineMinVersion) state.doc.manifest = data;
   else { status('无法识别：需要预设包 / scene / interactions / manifest'); return; }
 
+  if (typeof invalidateFeatherCache === 'function') invalidateFeatherCache();
   normalizeScene(state.doc.scene);
 
   // 旧文件的 interactions.bindings 要转成「数据绑定」节点，否则面板已隐藏、用户再也看不到
@@ -5755,6 +6104,14 @@ const GESTURES = [
  * 动作目录。implementation 标记很重要：
  * 只有引擎真的会执行的动作才允许选，其余标灰 —— 避免做出"点了没反应"的模板。
  */
+/** 媒体命令：与引擎 TriggerParser.MEDIA_COMMANDS、schema 的 enum 保持一致。 */
+const MEDIA_COMMANDS = [
+  ['playPause', '播放 / 暂停'],
+  ['next', '下一首'],
+  ['prev', '上一首'],
+  ['stop', '停止'],
+];
+
 const ACTIONS = [
   { value: 'playAnimation', label: '播放动画', implemented: true },
   { value: 'toggleVisible', label: '切换可见', implemented: true },
@@ -5762,7 +6119,7 @@ const ACTIONS = [
   { value: 'openUri', label: '打开链接 / 启动活动', implemented: true },
   { value: 'switchGlobal', label: '全局开关切换', implemented: false },
   { value: 'launchShortcut', label: '启动快捷方式', implemented: false },
-  { value: 'mediaControl', label: '音乐控制', implemented: false },
+  { value: 'mediaControl', label: '音乐控制（播放/暂停/切歌）', implemented: true },
   { value: 'volumeControl', label: '音量调节', implemented: false },
   { value: 'triggerFlow', label: '触发器流程', implemented: false },
 ];
@@ -5906,6 +6263,22 @@ function renderEventParams(event, card) {
       action.uri = v.trim();
       renderEvents();
     }, 'https:// 或 android-app://包名')));
+    return;
+  }
+
+  if (action.type === 'mediaControl') {
+    const sel = document.createElement('select');
+    MEDIA_COMMANDS.forEach(([value, label]) => {
+      const o = document.createElement('option');
+      o.value = value;
+      o.textContent = label;
+      sel.appendChild(o);
+    });
+    sel.value = action.command || 'playPause';
+    sel.onchange = () => { action.command = sel.value; renderEvents(); };
+    card.appendChild(fieldRow('命令', sel));
+    // 没有通知使用权时按了没反应，这里提前说清楚，省得以为是预设写错了
+    card.appendChild(el('div', 'hint', '需要「通知使用权」；没有正在播放的播放器时不会报错，只是没反应。'));
     return;
   }
 }
@@ -6510,7 +6883,7 @@ window.addEventListener('resize', () => {
 });
 
 // 版本标记：刷新后看一眼这里，就能确认浏览器是不是真的拿到了新脚本。
-const BUILD_TAG = '2026-11-03-v101weather2';
+const BUILD_TAG = '2026-11-07-v102rel';
 (function () {
   const node = document.getElementById('build');
   if (node) node.textContent = 'build ' + BUILD_TAG;

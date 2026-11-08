@@ -136,7 +136,14 @@
   button.tiny.on { background: #1d4ed8; border-color: #3b82f6; color: #fff; }
   canvas#stage { background: #11141a; border-radius: 8px; box-shadow: 0 0 0 1px var(--line); cursor: crosshair; }
   .timeline { flex: 0 0 auto; height: 190px; border-top: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; }
-  .timeline .hd { display: flex; gap: 6px; align-items: center; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+  .timeline .hd { display: flex; flex-direction: column; gap: 4px; align-items: stretch; padding: 5px 8px; border-bottom: 1px solid var(--line); }
+  .tl-bar { display: flex; gap: 6px; align-items: center; min-width: 0; }
+  /* 标签不许折行：折了以后"触发""循环"会竖着排，行高被撑成两倍 */
+  .tl-bar .tl-lab { flex: 0 0 auto; white-space: nowrap; }
+  /* 按钮文字不折行："在当前时间插帧"折成两行会把整条工具栏撑高 */
+  .tl-bar button { white-space: nowrap; }
+  .tl-bar > select { min-width: 0; }
+  .tl-bar .tl-sep { flex: 0 0 auto; }
   /* 时间轴主体：左轨道 / 右关键帧面板 并排 */
   .tl-main { flex: 1; min-height: 0; display: flex; align-items: stretch; }
   .tl-body { flex: 1 1 auto; min-width: 0; overflow: auto; position: relative; }
@@ -144,9 +151,17 @@
   .tl-kf { flex: 0 0 300px; min-width: 240px; border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
   .tl-kf .hd { display: flex; gap: 6px; align-items: center; padding: 4px 8px; border-bottom: 1px solid var(--line); flex: 0 0 auto; }
   .tl-kf .inspector { flex: 1; overflow: auto; padding: 0 8px 8px; }
+  /* 时间标尺：没有它，用户只能靠猜"这个菱形在时间轴的哪儿" */
+  .tl-ruler { display: flex; height: 18px; align-items: stretch; border-bottom: 1px solid #1b222b; background: #0c121a; position: sticky; top: 0; z-index: 3; }
+  .tl-ruler .tl-label { width: 96px; flex: 0 0 auto; }
+  .tl-ruler-lane { position: relative; flex: 1; min-width: 0; margin-right: 8px; }
+  .tl-tick { position: absolute; top: 0; bottom: 0; width: 1px; background: #1e2733; }
+  .tl-tick span { position: absolute; left: 3px; top: 3px; font-size: 9px; color: #4d6076; white-space: nowrap; }
+  .tl-tick:last-child span { left: auto; right: 3px; }
   .tl-track { display: flex; height: 30px; align-items: center; border-bottom: 1px solid #1b222b; }
   .tl-label { width: 96px; flex: 0 0 auto; padding-left: 8px; color: var(--muted); }
-  .tl-lane { position: relative; flex: 1; height: 100%; }
+  /* 右边留 8px：不然 t=1 的关键帧菱形有一半在可视区外，点都点不到 */
+  .tl-lane { position: relative; flex: 1; height: 100%; margin-right: 8px; }
   .kf {
     position: absolute; top: 50%; width: 11px; height: 11px; margin: -6px 0 0 -6px;
     transform: rotate(45deg); background: var(--accent); border: 1px solid #0b3d2a; cursor: ew-resize;
@@ -155,7 +170,7 @@
   .kf.start, .kf.end { background: #2f6b4f; }
   .playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--danger); pointer-events: none; }
   .playhead::before {
-    content: ""; position: absolute; top: 0; left: -5px; border: 6px solid transparent;
+    content: ""; position: absolute; top: 0; left: -7px; border: 8px solid transparent;
     border-top-color: var(--danger);
   }
   /*
@@ -667,7 +682,7 @@
         <button data-add="svg">SVG…</button>
       </div>
       <div class="list scroll" id="layer-list" style="flex:1;min-height:0"></div>
-      <div class="badge" style="padding:4px 10px;opacity:.6">拖动图层改层级 · 双击图层名重命名 · 拖到容器中间放进容器 · 越靠下越靠上</div>
+      <div class="badge" id="layer-hint" style="padding:4px 10px;opacity:.6">拖动图层改层级 · 双击图层名重命名 · 拖到容器中间放进容器 · 越靠下越靠上</div>
     </div>
   </aside>
 
@@ -683,30 +698,38 @@
     <div class="timeline">
       
       <div id="timeline-mode" style="flex:1;min-height:0;display:flex;flex-direction:column">
+      <!-- 顶栏拆两行：上行管"哪一组、怎么放"，下行管"怎么播、加不加帧"。
+           以前十个控件挤成一行，手机上折成四行且顺序混乱。 -->
       <div class="hd">
-        <button id="btn-play" class="toggle">▶ 播放</button>
-        <span class="badge" id="tl-info">播放头 0.00</span>
-        <span class="tl-sep"></span>
-        <label class="tl-lab">动画组</label>
-        <select id="clip-group" title="同一图层可以有多个动画组，先选组再补帧"></select>
-        <button id="btn-group-new" title="给当前图层新建一个动画组">＋组</button>
-        <button id="btn-group-rename" title="重命名当前动画组">改名</button>
-        <button id="btn-group-del" class="danger" title="删除当前动画组">删组</button>
-        <span class="spacer"></span>
-        <select id="trigger" title="触发方式">
-          <option value="always">常驻（可见即播）</option>
-          <option value="tap">点击触发</option>
-          <option value="func">函数触发（被调用时播）</option>
-        </select>
-        <select id="loop" title="循环">
-          <option value="once">播放一次</option>
-          <option value="onceHold">播放一次并停在结尾</option>
-          <option value="loop">循环</option>
-          <option value="pingpong">往返</option>
-        </select>
-        <input id="duration" type="number" min="1" step="50" style="width:78px" title="时长 ms" />
-        <button id="btn-add-kf">在当前时间插帧</button>
-        <button id="btn-del-kf" class="danger">删除帧</button>
+        <div class="tl-bar">
+          <button id="btn-play" class="toggle">▶ 播放</button>
+          <span class="badge" id="tl-info">播放头 0.00</span>
+          <span class="tl-sep"></span>
+          <label class="tl-lab">动画组</label>
+          <select id="clip-group" title="同一图层可以有多个动画组，先选组再补帧"></select>
+          <button id="btn-group-new" title="给当前图层新建一个动画组">＋组</button>
+          <button id="btn-group-rename" title="重命名当前动画组">改名</button>
+          <button id="btn-group-del" class="danger" title="删除当前动画组">删组</button>
+        </div>
+        <div class="tl-bar">
+          <label class="tl-lab">触发</label>
+          <select id="trigger" title="触发方式">
+            <option value="always">常驻（可见即播）</option>
+            <option value="tap">点击触发</option>
+            <option value="func">函数触发（被调用时播）</option>
+          </select>
+          <label class="tl-lab">循环</label>
+          <select id="loop" title="循环">
+            <option value="once">播放一次</option>
+            <option value="onceHold">播放一次并停在结尾</option>
+            <option value="loop">循环</option>
+            <option value="pingpong">往返</option>
+          </select>
+          <input id="duration" type="number" min="1" step="50" style="width:78px" title="时长 ms" />
+          <span class="tl-sep"></span>
+          <button id="btn-add-kf">在当前时间插帧</button>
+          <button id="btn-del-kf" class="danger">删除帧</button>
+        </div>
       </div>
       <div class="tl-main">
         <div class="tl-body" id="tl-body"></div>
@@ -914,11 +937,11 @@
     </div>
   </div>
 </div>
-<script src="catalog.js?v=20261103v101weather2"></script>
+<script src="catalog.js?v=20261107v102rel"></script>
 <!-- 工作台与编译层都要先于 editor.js：editor.js 末尾会调用 setupStudio() / setupStudioCompile() -->
-<script src="studio.js?v=20261103v101weather2"></script>
-<script src="studio-compile.js?v=20261103v101weather2"></script>
-<script src="editor.js?v=20261103v101weather2"></script>
+<script src="studio.js?v=20261107v102rel"></script>
+<script src="studio-compile.js?v=20261107v102rel"></script>
+<script src="editor.js?v=20261107v102rel"></script>
 <script>
   // 只在安卓壳（注入了 JS 桥）里加载移动端皮肤；桌面浏览器与桌面 exe 不会走到这里。
   // 先把 loow-mobile 类挂上再加载脚本：否则首帧会闪一下桌面三栏布局。
