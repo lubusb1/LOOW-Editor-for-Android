@@ -28,8 +28,15 @@ file 协议下 localStorage / IndexedDB 会失效，草稿和图片会静默丢�
 `tools/web-editor/mobile/` 里的规则全部以 `html.loow-mobile` 为前缀。
 桌面浏览器永远不会加这个类，所以改移动布局不需要回归桌面像素。
 
-反过来说：**共用文件（index.html / studio.js）的改动必须回归桌面**，
-标准是 1280×860 截图与改动前逐字节一致。
+**这个仓库只为手机服务。** 作者 2026-11-08 明确：
+
+- 不用为桌面端做适配，也不用做桌面回归；
+- 桌面版作者**在别处单独制作**，本仓库的 `tools/web-editor` 只服务于手机 App；
+- 所以共用文件（index.html / editor.js / studio.js）怎么改，完全由手机端说了算，
+  鼠标专属的交互（右键菜单、双击折叠、拖拽胶囊…）在手机上碍事就直接去掉。
+
+唯一还要守的是：手机壳（`html.loow-mobile`）之外的样式别乱动——那是给浏览器调试
+本文件用的，留着能少装一次 App 就能验证逻辑。
 
 ## 4. 零第三方依赖
 
@@ -70,11 +77,11 @@ build.cmd :editor:assembleRelease    :: 正式包（需要 keystore.properties�
 发布签名用仓库外的 keystore：根目录有 `keystore.properties` 就自动生效，
 没有则退回 debug 签名。**私钥和密码绝不入库。**
 
-验收标准：
+验收标准（以手机为准，见 §3）：
 
-1. 桌面浏览器打开 `tools/web-editor/index.html`，原有交互不变（截图逐字节一致）；
-2. 手机 App 里同一个功能可用（必要时在 `mobile/mobile.js` 里补触屏入口）；
-3. 两端产出的 `scene.json` / `interactions.json` 完全一致。
+1. 手机 App 里功能可用、触屏手势不打架（必要时在 `mobile/mobile.js` 里补触屏入口）；
+2. 产出的 `scene.json` / `interactions.json` 符合 `schema/`；
+3. 桌面浏览器打开 `tools/web-editor/index.html` 不报错即可，不要求像素一致。
 
 构建成功不等于功能正确：涉及交互的改动，必须说明"在什么设备上看到了什么"。
 
